@@ -135,15 +135,27 @@ export default function PostsPage() {
       {postsQuery.isLoading ? (
         <p>Loading posts…</p>
       ) : sortedPosts.length === 0 ? (
-        <div className="posts-empty">No posts yet. Create one to get started.</div>
+        <div className="posts-empty">
+          <h3>No posts yet</h3>
+          <p>Create your first post to get started with your content management.</p>
+          <Button
+            onClick={() => {
+              setErrorMessage(null)
+              setCreateOpen(true)
+            }}
+          >
+            Create your first post
+          </Button>
+        </div>
       ) : (
         <table className="table">
+          <caption className="sr-only">Posts</caption>
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Last Updated</th>
-              <th>Status</th>
-              <th className="table-cell-right">Actions</th>
+              <th scope="col">Name</th>
+              <th scope="col">Last Updated</th>
+              <th scope="col">Status</th>
+              <th scope="col" className="table-cell-right">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -192,13 +204,14 @@ export default function PostsPage() {
               value={newPostName}
               onChange={(event) => setNewPostName(event.target.value)}
               autoFocus
+              aria-required="true"
             />
           </div>
           <div className="modal-actions">
             <Button variant="secondary" onClick={() => setCreateOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={createMutation.isPending}>
+            <Button type="submit" disabled={createMutation.isPending} aria-busy={createMutation.isPending}>
               {createMutation.isPending ? 'Creating…' : 'Create'}
             </Button>
           </div>

@@ -2,6 +2,7 @@ import { Link, Outlet, useLocation } from 'react-router-dom'
 import clsx from 'clsx'
 import { Button } from '../components/Button'
 import { DeployModal } from '../components/DeployModal'
+import { ThreeBackground } from '../components/ThreeBackground'
 import { deployToHugo } from '../api/posts'
 import { useTheme } from '../context/ThemeContext'
 import { useState } from 'react'
@@ -18,6 +19,7 @@ export default function RootLayout() {
 
   return (
     <div className="app-shell">
+      <ThreeBackground />
       <header className={clsx('app-header', isEditor && 'app-header-wide')}>
         <div className="app-brand">
           <Link to="/">CMS</Link>

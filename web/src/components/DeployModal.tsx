@@ -1,33 +1,43 @@
-import { useState } from 'react'
-import { Modal } from './Modal'
-import { Button } from './Button'
+import { useState } from "react";
+import { Modal } from "./Modal";
+import { Button } from "./Button";
 
 type DeployModalProps = {
-  isOpen: boolean
-  onClose: () => void
-  onDeploy: (commitMessage: string) => void
-  isDeploying: boolean
-}
+  isOpen: boolean;
+  onClose: () => void;
+  onDeploy: (commitMessage: string) => void;
+  isDeploying: boolean;
+};
 
-export function DeployModal({ isOpen, onClose, onDeploy, isDeploying }: DeployModalProps) {
-  const [commitMessage, setCommitMessage] = useState('')
+export function DeployModal({
+  isOpen,
+  onClose,
+  onDeploy,
+  isDeploying,
+}: DeployModalProps) {
+  const [commitMessage, setCommitMessage] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
+    e.preventDefault();
     if (commitMessage.trim()) {
-      onDeploy(commitMessage.trim())
+      onDeploy(commitMessage.trim());
     }
-  }
+  };
 
   const handleClose = () => {
     if (!isDeploying) {
-      setCommitMessage('')
-      onClose()
+      setCommitMessage("");
+      onClose();
     }
-  }
+  };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} width="md" title="Deploy to Hugo Site">
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      width="md"
+      title="Deploy to Hugo Site"
+    >
       <form onSubmit={handleSubmit}>
         <div className="form-grid">
           <div className="form-field">
@@ -44,23 +54,43 @@ export function DeployModal({ isOpen, onClose, onDeploy, isDeploying }: DeployMo
               required
             />
           </div>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0 }}>
+          <p
+            style={{
+              fontSize: "0.85rem",
+              color: "var(--text-secondary)",
+              margin: 0,
+            }}
+          >
             This will run:
             <br />
-            <code style={{ fontSize: '0.8rem' }}>git add . && git commit -am "..." && git push</code>
+            <code style={{ fontSize: "0.8rem" }}>
+              git add . && git commit -am "..." && git push
+            </code>
             <br />
-            in <code style={{ fontSize: '0.8rem' }}>~/Code/hugoSite/</code>
+            in{" "}
+            <code style={{ fontSize: "0.8rem" }}>
+              ~/Code/Production_Do_Not_Touch/hugoSite/
+            </code>
           </p>
         </div>
         <div className="modal-actions modal-actions-spaced">
-          <Button type="button" variant="secondary" onClick={handleClose} disabled={isDeploying}>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={handleClose}
+            disabled={isDeploying}
+          >
             Cancel
           </Button>
-          <Button type="submit" variant="success" disabled={isDeploying || !commitMessage.trim()}>
-            {isDeploying ? 'Deploying...' : 'Deploy'}
+          <Button
+            type="submit"
+            variant="success"
+            disabled={isDeploying || !commitMessage.trim()}
+          >
+            {isDeploying ? "Deploying..." : "Deploy"}
           </Button>
         </div>
       </form>
     </Modal>
-  )
+  );
 }

@@ -1,0 +1,18 @@
+version: '3.8'
+services:
+  server:
+    build: ./server
+    volumes:
+      - /home/zimengx/Code/Production_Do_Not_Touch/hugoSite/content/:/usr/src/content
+    environment:
+      - HUGO_SITE_DIR=/path/to/your/hugoSite
+    restart: always
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    ports:
+      - "6768:80"
+    depends_on:
+      - server
+    restart: always

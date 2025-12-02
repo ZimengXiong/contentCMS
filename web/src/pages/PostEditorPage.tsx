@@ -337,7 +337,7 @@ export default function PostEditorPage() {
     }
     autosaveTimer.current = window.setTimeout(() => {
       triggerSave()
-    }, 40000)
+    }, 5000)
   }, [content, hasInitialized, saveMutation.isPending, triggerSave])
 
   const markdownExtensions = useMemo(
@@ -450,7 +450,13 @@ export default function PostEditorPage() {
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
           rehypePlugins={rehypePlugins}
-          components={markdownComponents}
+          components={{
+            ...markdownComponents,
+            img: ({ src, alt, ...rest }) => {
+              const resolved = resolveAssetUrl(src)
+              return <img loading="lazy" src={resolved} alt={alt ?? ''} {...rest} />
+            }
+          }}
         >
           {previewContent}
         </ReactMarkdown>
@@ -464,7 +470,7 @@ export default function PostEditorPage() {
         <Button variant="secondary" className="btn-sm" onClick={() => navigate('/')}>Back</Button>
         <h2>{postSlug}</h2>
         <div className="editor-toolbar-buttons">
-          <div className="editor-status">{statusMessage}</div>
+          <div className="editor-status" aria-live="polite" aria-atomic="true">{statusMessage}</div>
           <Button variant="secondary" className="btn-sm" onClick={() => setShowFiles((prev) => !prev)}>
             {showFiles ? 'Hide files' : 'Show files'}
           </Button>
@@ -494,7 +500,13 @@ export default function PostEditorPage() {
               Preview
             </Button>
           </div>
-          <Button variant="secondary" className="btn-sm" onClick={triggerSave} disabled={saveMutation.isPending || content === lastSavedContent.current}>
+          <Button 
+            variant="secondary" 
+            className="btn-sm" 
+            onClick={triggerSave} 
+            disabled={saveMutation.isPending || content === lastSavedContent.current}
+            aria-busy={saveMutation.isPending}
+          >
             {saveMutation.isPending ? 'Saving…' : 'Save'}
           </Button>
         </div>
