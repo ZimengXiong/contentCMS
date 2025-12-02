@@ -1,557 +1,489 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import CodeMirror from '@uiw/react-codemirror'
-import { markdown } from '@codemirror/lang-markdown'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useParams, Link } from 'react-router-dom'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror'
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
+import { EditorView } from '@codemirror/view'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
-import rehypeRaw from 'rehype-raw'
 import rehypeHighlight from 'rehype-highlight'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import clsx from 'clsx'
-import { Button } from '../components/Button'
-import { FileBrowser } from '../components/FileBrowser'
-import { fetchPostIndex, savePostIndex } from '../api/posts'
-import { formatRelativeTime } from '../utils/time'
-import type { ApiError } from '../api/client'
-import type { PluggableList } from 'unified'
-import type { Components } from 'react-markdown'
-import { EditorView, keymap, type Command } from '@codemirror/view'
-import { EditorSelection } from '@codemirror/state'
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
-import { tags } from '@lezer/highlight'
+import rehypeRaw from 'rehype-raw'
+import { clsx } from 'clsx'
+import { fetchPostIndex, savePostIndex, uploadFile } from '../api/posts'
+import { FileTree } from '../components/features/FileTree'
+import { Toolbar } from '../components/features/Toolbar'
+import { KeyboardShortcuts } from '../components/features/KeyboardShortcuts'
+import { Button } from '../components/ui/Button'
+import { useToast } from '../components/ui/Toast'
+import {
+  IconSave,
+  IconArrowLeft,
+  IconEye,
+  IconMaximize,
+  IconMinimize,
+  IconKeyboard,
+  IconClock,
+  IconCheck,
+  IconFolder,
+  IconColumns,
+  IconUpload,
+} from '../components/Icons'
+import { useTheme } from '../context/ThemeContext'
 
-function isApiError(error: unknown): error is ApiError {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'status' in error &&
-    typeof (error as { status?: unknown }).status === 'number'
-  )
+// Calculate reading time (average 200 words per minute)
+function getReadingTime(text: string): string {
+  const words = text.trim().split(/\s+/).filter(Boolean).length
+  const minutes = Math.ceil(words / 200)
+  return minutes === 1 ? '1 min read' : `${minutes} min read`
 }
 
-type SaveStatus = 'idle' | 'editing' | 'saving' | 'saved' | 'error'
-
-function wrapSelection(view: EditorView, before: string, after: string, placeholder: string) {
-  const { state } = view
-  const transaction = state.changeByRange((range) => {
-    const { from, to } = range
-    const selected = state.sliceDoc(from, to)
-    const text = selected.length > 0 ? selected : placeholder
-    const insert = `${before}${text}${after}`
-    const cursorStart = from + before.length
-    const cursorEnd = cursorStart + text.length
-    return {
-      changes: { from, to, insert },
-      range: EditorSelection.range(cursorStart, cursorEnd),
-    }
-  })
-  view.dispatch(transaction)
-  view.focus()
-  return true
+// Get word and character counts
+function getStats(text: string) {
+  const chars = text.length
+  const words = text.trim().split(/\s+/).filter(Boolean).length
+  const lines = text.split('\n').length
+  return { chars, words, lines }
 }
-
-function createWrapCommand(before: string, after = before, placeholder = 'text'): Command {
-  return (view) => wrapSelection(view, before, after, placeholder)
-}
-
-const insertLinkCommand: Command = (view) => {
-  const transaction = view.state.changeByRange((range) => {
-    const { from, to } = range
-    const selected = view.state.sliceDoc(from, to)
-    const linkText = selected.length > 0 ? selected : 'link text'
-    const insert = `[${linkText}]()`
-    const cursorPosition = from + linkText.length + 3 // Position after [text](
-    return {
-      changes: { from, to, insert },
-      range: EditorSelection.cursor(cursorPosition),
-    }
-  })
-  view.dispatch(transaction)
-  view.focus()
-  return true
-}
-
-const markdownFormattingKeymap = keymap.of([
-  { key: 'Mod-b', run: createWrapCommand('**', '**', 'bold text') },
-  { key: 'Mod-i', run: createWrapCommand('*', '*', 'italic text') },
-  { key: 'Mod-u', run: createWrapCommand('<u>', '</u>', 'underlined text') },
-  { key: 'Mod-Shift-s', run: createWrapCommand('~~', '~~', 'strikethrough') },
-  { key: 'Mod-Shift-c', run: createWrapCommand('`', '`', 'code') },
-  { key: 'Mod-k', run: insertLinkCommand },
-])
-
-const browserFindKeymap = keymap.of([
-  {
-    key: 'Mod-f',
-    preventDefault: false,
-    run: () => false,
-  },
-])
-
-const markdownHighlightStyle = HighlightStyle.define([
-  {
-    tag: [
-      tags.heading,
-      tags.strong,
-      tags.emphasis,
-      tags.strikethrough,
-      tags.quote,
-      tags.list,
-      tags.contentSeparator,
-      tags.meta,
-      tags.processingInstruction,
-      tags.comment,
-      tags.keyword,
-      tags.literal,
-      tags.string,
-      tags.monospace,
-      tags.brace,
-      tags.squareBracket,
-      tags.angleBracket,
-      tags.paren,
-      tags.punctuation,
-      tags.operator,
-      tags.escape,
-    ],
-    color: 'var(--text-primary)',
-  },
-  {
-    tag: [tags.link, tags.url],
-    color: 'var(--link-color)',
-  },
-  {
-    tag: tags.heading1,
-    color: 'var(--text-primary)',
-    fontWeight: '700',
-  },
-  {
-    tag: [tags.heading2, tags.heading3, tags.heading4, tags.heading5, tags.heading6],
-    color: 'var(--text-primary)',
-    fontWeight: '600',
-  },
-])
-
-const markdownHighlighting = syntaxHighlighting(markdownHighlightStyle)
-
-const markdownEditorBaseTheme = EditorView.theme({
-  '&.cm-editor': {
-    backgroundColor: 'transparent',
-    color: 'var(--text-primary)',
-  },
-  '.cm-content': {
-    color: 'var(--text-primary)',
-    caretColor: '#ffffff',
-  },
-  '.cm-line': {
-    color: 'var(--text-primary)',
-  },
-  '.cm-link': {
-    color: 'var(--link-color)',
-  },
-  '.cm-url': {
-    color: 'var(--link-color)',
-  },
-  '.cm-formatting': {
-    color: 'var(--text-primary)',
-  },
-  '.cm-formatting-header': {
-    color: 'var(--text-primary)',
-  },
-  '.cm-formatting-strong': {
-    color: 'var(--text-primary)',
-  },
-  '.cm-formatting-em': {
-    color: 'var(--text-primary)',
-  },
-  '.cm-formatting-code': {
-    color: 'var(--text-primary)',
-  },
-  '.cm-formatting-link': {
-    color: 'var(--text-primary)',
-  },
-  '.cm-formatting-image': {
-    color: 'var(--text-primary)',
-  },
-  '.cm-formatting-list': {
-    color: 'var(--text-primary)',
-  },
-  '.cm-formatting-quote': {
-    color: 'var(--text-primary)',
-  },
-  '.cm-cursor': {
-    borderLeftColor: '#ffffff',
-  },
-  '.cm-dropCursor': {
-    borderLeftColor: '#ffffff',
-  },
-  '.cm-selectionLayer': {
-    mixBlendMode: 'normal',
-  },
-  '.cm-selectionBackground': {
-    opacity: 1,
-  },
-  // Dark mode selection styling
-  ':root[data-theme="dark"] & .cm-selectionLayer': {
-    mixBlendMode: 'normal',
-  },
-  ':root[data-theme="dark"] & .cm-selectionBackground': {
-    backgroundColor: '#03624c !important',
-    opacity: 1,
-  },
-  ':root[data-theme="dark"] &.cm-focused .cm-selectionBackground': {
-    backgroundColor: '#03624c !important',
-    opacity: 1,
-  },
-  ':root[data-theme="dark"] & .cm-line::selection': {
-    backgroundColor: '#03624c !important',
-    color: '#f8fafc',
-  },
-  ':root[data-theme="dark"] & .cm-line::-moz-selection': {
-    backgroundColor: '#03624c !important',
-    color: '#f8fafc',
-  },
-})
 
 export default function PostEditorPage() {
   const { slug } = useParams<{ slug: string }>()
-  const navigate = useNavigate()
+  const { theme } = useTheme()
+  const { success, error } = useToast()
   const queryClient = useQueryClient()
+  const editorRef = useRef<ReactCodeMirrorRef>(null)
+  const previewRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Editor state
   const [content, setContent] = useState('')
-  const [status, setStatus] = useState<SaveStatus>('idle')
-  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null)
-  const [savingError, setSavingError] = useState<string | null>(null)
-  const [hasInitialized, setHasInitialized] = useState(false)
+  const [savedContent, setSavedContent] = useState('')
+  const [showPreview, setShowPreview] = useState(true)
   const [showFiles, setShowFiles] = useState(true)
-  const [viewMode, setViewMode] = useState<'split' | 'source' | 'preview'>('split')
-  const lastSavedContent = useRef('')
-  const autosaveTimer = useRef<number | null>(null)
-  const editorRef = useRef<any>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [showShortcuts, setShowShortcuts] = useState(false)
+  const [lastSaved, setLastSaved] = useState<Date | null>(null)
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(true)
+  const [isDragging, setIsDragging] = useState(false)
 
-  const postSlug = slug ?? ''
+  // Check if content has changed
+  const hasUnsavedChanges = content !== savedContent
 
-  const indexQuery = useQuery({
-    queryKey: ['postIndex', postSlug],
-    queryFn: () => fetchPostIndex(postSlug),
-    enabled: Boolean(postSlug),
-    retry: (failureCount, error) => {
-      if (isApiError(error) && error.status === 404) {
-        return false
-      }
-      return failureCount < 2
-    },
+  // Load initial content
+  const { data: initialContent, isLoading } = useQuery({
+    queryKey: ['post-content', slug],
+    queryFn: () => fetchPostIndex(slug!),
+    enabled: !!slug,
   })
 
-  const isIndexMissing = indexQuery.isError && isApiError(indexQuery.error) && indexQuery.error.status === 404
-  const loadError = indexQuery.isError && !isIndexMissing ? (indexQuery.error as Error) : null
-
   useEffect(() => {
-    if (!postSlug) {
-      return
+    if (initialContent !== undefined) {
+      setContent(initialContent)
+      setSavedContent(initialContent)
     }
-    if (indexQuery.isSuccess) {
-      setContent(indexQuery.data)
-      lastSavedContent.current = indexQuery.data
-      setHasInitialized(true)
-      setStatus('idle')
-      return
-    }
-    if (indexQuery.isError) {
-      const error = indexQuery.error
-      if (isApiError(error) && error.status === 404) {
-        setContent('')
-        lastSavedContent.current = ''
-        setHasInitialized(true)
-        setStatus('editing')
-      }
-    }
-  }, [indexQuery.isSuccess, indexQuery.isError, indexQuery.data, indexQuery.error, postSlug])
+  }, [initialContent])
 
-  useEffect(() => {
-    return () => {
-      if (autosaveTimer.current) {
-        window.clearTimeout(autosaveTimer.current)
-      }
-    }
-  }, [])
-
+  // Save mutation
   const saveMutation = useMutation({
-    mutationFn: (body: string) => savePostIndex(postSlug, body),
-    onMutate: () => {
-      setStatus('saving')
-      setSavingError(null)
+    mutationFn: (newContent: string) => savePostIndex(slug!, newContent),
+    onSuccess: () => {
+      setSavedContent(content)
+      setLastSaved(new Date())
+      queryClient.invalidateQueries({ queryKey: ['post-content', slug] })
+      success('Saved successfully')
     },
-    onSuccess: (formatted) => {
-      lastSavedContent.current = formatted
-      updateContent(formatted, true)
-      setStatus('saved')
-      setLastSavedAt(new Date())
-      queryClient.setQueryData(['postIndex', postSlug], formatted)
-    },
-    onError: (error: unknown) => {
-      const message = error instanceof Error ? error.message : 'Failed to save content'
-      setSavingError(message)
-      setStatus('error')
+    onError: () => {
+      error('Failed to save')
     },
   })
 
-  const triggerSave = useCallback(() => {
-    if (!postSlug) {
-      return
-    }
-    if (saveMutation.isPending) {
-      return
-    }
-    if (content === lastSavedContent.current) {
-      return
-    }
+  const handleSave = useCallback(() => {
+    if (!hasUnsavedChanges) return
     saveMutation.mutate(content)
-  }, [content, postSlug, saveMutation])
+  }, [content, hasUnsavedChanges, saveMutation])
 
+  // Auto-save every 30 seconds if enabled
   useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
-        event.preventDefault()
-        triggerSave()
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [triggerSave])
+    if (!autoSaveEnabled || !hasUnsavedChanges) return
+    const timer = setTimeout(() => {
+      saveMutation.mutate(content)
+    }, 30000)
+    return () => clearTimeout(timer)
+  }, [content, autoSaveEnabled, hasUnsavedChanges, saveMutation])
 
+  // Keyboard shortcuts
   useEffect(() => {
-    if (!hasInitialized) {
-      return
-    }
-    if (content === lastSavedContent.current) {
-      return
-    }
-    if (saveMutation.isPending) {
-      return
-    }
-    setStatus('editing')
-    if (autosaveTimer.current) {
-      window.clearTimeout(autosaveTimer.current)
-    }
-    autosaveTimer.current = window.setTimeout(() => {
-      triggerSave()
-    }, 5000)
-  }, [content, hasInitialized, saveMutation.isPending, triggerSave])
+    const onKeyDown = (e: KeyboardEvent) => {
+      const isMod = e.metaKey || e.ctrlKey
 
-  const markdownExtensions = useMemo(
-    () => [markdown(), EditorView.lineWrapping, browserFindKeymap, markdownFormattingKeymap, markdownHighlighting, markdownEditorBaseTheme],
-    [],
-  )
-  const remarkPlugins = useMemo<PluggableList>(() => [remarkGfm, remarkMath], [])
-  const rehypePlugins = useMemo<PluggableList>(() => [rehypeRaw, rehypeKatex, rehypeHighlight], [])
-  const resolveAssetUrl = useCallback(
-    (src: string | null | undefined): string | undefined => {
-      if (!src) {
-        return undefined
+      // Save: Ctrl+S
+      if (isMod && e.key === 's') {
+        e.preventDefault()
+        handleSave()
       }
-      if (/^(data:|https?:|mailto:)/i.test(src)) {
-        return src
+
+      // Toggle preview: Ctrl+E
+      if (isMod && e.key === 'e') {
+        e.preventDefault()
+        setShowPreview((p) => !p)
       }
-      if (src.startsWith('/')) {
-        return src
+
+      // Toggle files: Ctrl+Shift+F
+      if (isMod && e.shiftKey && e.key === 'F') {
+        e.preventDefault()
+        setShowFiles((f) => !f)
       }
-      const cleaned = src.replace(/^\.\//, '').replace(/^\//, '')
-      if (cleaned.includes('..')) {
-        return src
+
+      // Toggle fullscreen: Ctrl+Shift+M
+      if (isMod && e.shiftKey && e.key === 'M') {
+        e.preventDefault()
+        setIsFullscreen((f) => !f)
       }
-      const encodedPath = cleaned
-        .split('/')
-        .filter(Boolean)
-        .map((segment) => encodeURIComponent(segment))
-        .join('/')
-      return `/media/posts/${encodeURIComponent(postSlug)}/${encodedPath}`
+
+      // Show shortcuts: Ctrl+/
+      if (isMod && e.key === '/') {
+        e.preventDefault()
+        setShowShortcuts((s) => !s)
+      }
+
+      // Exit fullscreen: Escape
+      if (e.key === 'Escape' && isFullscreen) {
+        setIsFullscreen(false)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [handleSave, isFullscreen])
+
+  // Warn before leaving with unsaved changes
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault()
+        e.returnValue = ''
+      }
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [hasUnsavedChanges])
+
+  // Upload mutation for drag-drop
+  const uploadMutation = useMutation({
+    mutationFn: async (file: File) => {
+      await uploadFile(slug!, '', file)
+      return file.name
     },
-    [postSlug],
-  )
-  const markdownComponents = useMemo<Components>(
-    () => ({
-      img: ({ src, alt, ...rest }) => {
-        const resolved = resolveAssetUrl(src)
-        return <img src={resolved} alt={alt} {...rest} />
+    onSuccess: (fileName) => {
+      // Insert markdown for the uploaded file
+      const ext = fileName.split('.').pop()?.toLowerCase()
+      const isImage = ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(ext || '')
+      const markdown = isImage ? `![${fileName}](${fileName})` : `[${fileName}](${fileName})`
+      insertText(markdown)
+      queryClient.invalidateQueries({ queryKey: ['files', slug] })
+      success(`Uploaded ${fileName}`)
+    },
+    onError: () => {
+      error('Upload failed')
+    },
+  })
+
+  // Drag and drop handlers
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(true)
+  }
+
+  const handleDragLeave = () => {
+    setIsDragging(false)
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(false)
+    const files = Array.from(e.dataTransfer.files)
+    files.forEach((file) => uploadMutation.mutate(file))
+  }
+
+  // Insert text helper for toolbar
+  const insertText = (before: string, after = '', placeholder = '') => {
+    const view = editorRef.current?.view
+    if (!view) return
+
+    const { from, to } = view.state.selection.main
+    const selectedText = view.state.sliceDoc(from, to)
+    const insertedText = selectedText || placeholder
+    const newText = before + insertedText + after
+
+    view.dispatch({
+      changes: { from, to, insert: newText },
+      selection: {
+        anchor: from + before.length,
+        head: from + before.length + insertedText.length,
       },
-    }),
-    [resolveAssetUrl],
+    })
+    view.focus()
+  }
+
+  // Transform image URLs in markdown preview
+  const transformImageUri = useCallback(
+    (src: string) => {
+      if (!src) return src
+      // If it's already an absolute URL, return as-is
+      if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('/')) {
+        return src
+      }
+      // Transform relative paths to media URLs
+      return `/media/posts/${encodeURIComponent(slug!)}/${src}`
+    },
+    [slug]
   )
 
-  const statusMessage = useMemo(() => {
-    switch (status) {
-      case 'saving':
-        return 'Saving…'
-      case 'saved':
-        return lastSavedAt ? `Saved ${formatRelativeTime(lastSavedAt)}` : 'Saved'
-      case 'editing':
-        return 'Unsaved changes'
-      case 'error':
-        return savingError ?? 'Save failed'
-      default:
-        return ''
-    }
-  }, [status, lastSavedAt, savingError])
+  // Stats
+  const stats = useMemo(() => getStats(content), [content])
+  const readingTime = useMemo(() => getReadingTime(content), [content])
 
-  const updateContent = useCallback((newContent: string, preserveCursor = false) => {
-    if (preserveCursor && editorRef.current?.view) {
-      const editor = editorRef.current.view
-      const currentPos = editor.state.selection.main.head
-      editor.dispatch({
-        changes: { from: 0, to: editor.state.doc.length, insert: newContent },
-        selection: { anchor: Math.min(currentPos, newContent.length) }
-      })
-    } else {
-      setContent(newContent)
-    }
-  }, [])
-
-  if (!postSlug) {
+  if (!slug) {
     return (
-      <div className="card">
-        <p>Invalid post. <Button onClick={() => navigate('/')}>Go back</Button></p>
+      <div className="flex items-center justify-center h-screen">
+        <p className="text-[var(--text-muted)]">Invalid post</p>
       </div>
     )
   }
 
-  if (loadError && !hasInitialized) {
+  if (isLoading) {
     return (
-      <div className="card">
-        <h2>Unable to load post</h2>
-        <p className="message message-error">{loadError.message}</p>
-        <div className="modal-actions modal-actions-spaced">
-          <Button variant="secondary" onClick={() => navigate('/')}>Back</Button>
-          <Button variant="primary" onClick={() => indexQuery.refetch()}>Retry</Button>
+      <div className="flex items-center justify-center h-screen bg-[var(--bg-primary)]">
+        <div className="text-center">
+          <div className="animate-spin w-8 h-8 border-2 border-[var(--accent)] border-t-transparent rounded-full mx-auto mb-4" />
+          <p className="text-[var(--text-muted)]">Loading editor...</p>
         </div>
       </div>
     )
   }
-
-  const isLoading = indexQuery.isLoading && !hasInitialized
-  const previewContent = content || '*Start writing your post in Markdown.*'
-
-  const renderEditorPane = (isSinglePane: boolean) => (
-    <div className={clsx('editor-pane', isSinglePane && 'single-pane')}>
-      <CodeMirror
-        ref={editorRef}
-        value={content}
-        extensions={markdownExtensions}
-        onChange={(value) => updateContent(value, false)}
-        height="100%"
-      />
-    </div>
-  )
-
-  const renderPreviewPane = (isSinglePane: boolean) => (
-    <div className={clsx('preview-pane', isSinglePane && 'single-pane')}>
-      <article className="markdown-body">
-        <ReactMarkdown
-          remarkPlugins={remarkPlugins}
-          rehypePlugins={rehypePlugins}
-          components={{
-            ...markdownComponents,
-            img: ({ src, alt, ...rest }) => {
-              const resolved = resolveAssetUrl(src)
-              return <img loading="lazy" src={resolved} alt={alt ?? ''} {...rest} />
-            }
-          }}
-        >
-          {previewContent}
-        </ReactMarkdown>
-      </article>
-    </div>
-  )
 
   return (
-    <div className="editor-page">
-      <div className="editor-toolbar">
-        <Button variant="secondary" className="btn-sm" onClick={() => navigate('/')}>Back</Button>
-        <h2>{postSlug}</h2>
-        <div className="editor-toolbar-buttons">
-          <div className="editor-status" aria-live="polite" aria-atomic="true">{statusMessage}</div>
-          <Button variant="secondary" className="btn-sm" onClick={() => setShowFiles((prev) => !prev)}>
-            {showFiles ? 'Hide files' : 'Show files'}
-          </Button>
-          <div className="editor-view-toggle" role="group" aria-label="Editor view mode">
-            <Button
-              variant="secondary"
-              className={clsx('btn-sm', 'view-toggle-btn', viewMode === 'source' && 'view-toggle-btn-active')}
-              onClick={() => setViewMode('source')}
-              aria-pressed={viewMode === 'source'}
-            >
-              Source
-            </Button>
-            <Button
-              variant="secondary"
-              className={clsx('btn-sm', 'view-toggle-btn', viewMode === 'split' && 'view-toggle-btn-active')}
-              onClick={() => setViewMode('split')}
-              aria-pressed={viewMode === 'split'}
-            >
-              Split
-            </Button>
-            <Button
-              variant="secondary"
-              className={clsx('btn-sm', 'view-toggle-btn', viewMode === 'preview' && 'view-toggle-btn-active')}
-              onClick={() => setViewMode('preview')}
-              aria-pressed={viewMode === 'preview'}
-            >
-              Preview
-            </Button>
+    <div
+      className={clsx(
+        'flex flex-col bg-[var(--bg-primary)]',
+        isFullscreen ? 'fixed inset-0 z-50' : 'h-screen'
+      )}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Drop overlay */}
+      {isDragging && (
+        <div className="absolute inset-0 z-50 bg-[var(--accent)]/10 border-2 border-dashed border-[var(--accent)] flex items-center justify-center">
+          <div className="bg-[var(--bg-secondary)] px-6 py-4 rounded-xl shadow-lg flex items-center gap-3">
+            <IconUpload size={24} className="text-[var(--accent)]" />
+            <span className="text-lg font-medium">Drop files to upload</span>
           </div>
-          <Button 
-            variant="secondary" 
-            className="btn-sm" 
-            onClick={triggerSave} 
-            disabled={saveMutation.isPending || content === lastSavedContent.current}
-            aria-busy={saveMutation.isPending}
+        </div>
+      )}
+
+      {/* Header */}
+      <header className="h-12 flex items-center justify-between px-4 border-b border-[var(--border)] bg-[var(--bg-secondary)] shrink-0">
+        <div className="flex items-center gap-3">
+          <Link
+            to="/"
+            className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors"
+            onClick={(e) => {
+              if (hasUnsavedChanges && !confirm('You have unsaved changes. Leave anyway?')) {
+                e.preventDefault()
+              }
+            }}
           >
-            {saveMutation.isPending ? 'Saving…' : 'Save'}
+            <IconArrowLeft size={18} />
+          </Link>
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-[var(--text-primary)]">{slug}</span>
+            <span className="text-xs text-[var(--text-muted)]">index.md</span>
+            {hasUnsavedChanges && (
+              <span className="w-2 h-2 rounded-full bg-amber-500" title="Unsaved changes" />
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1">
+          {/* Stats */}
+          <div className="hidden md:flex items-center gap-3 mr-3 text-xs text-[var(--text-muted)]">
+            <span>{stats.words} words</span>
+            <span>{stats.chars} chars</span>
+            <span className="flex items-center gap-1">
+              <IconClock size={12} />
+              {readingTime}
+            </span>
+          </div>
+
+          {/* Last saved indicator */}
+          {lastSaved && (
+            <div className="hidden sm:flex items-center gap-1 mr-2 text-xs text-[var(--success)]">
+              <IconCheck size={12} />
+              <span>Saved {lastSaved.toLocaleTimeString()}</span>
+            </div>
+          )}
+
+          {/* Toggle Files */}
+          <button
+            onClick={() => setShowFiles(!showFiles)}
+            className={clsx(
+              'p-1.5 rounded-lg transition-colors',
+              showFiles
+                ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)]'
+                : 'text-[var(--text-muted)] hover:bg-[var(--bg-tertiary)]'
+            )}
+            title="Toggle files (Ctrl+Shift+F)"
+          >
+            <IconFolder size={18} />
+          </button>
+
+          {/* Toggle Preview */}
+          <button
+            onClick={() => setShowPreview(!showPreview)}
+            className={clsx(
+              'p-1.5 rounded-lg transition-colors',
+              showPreview
+                ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)]'
+                : 'text-[var(--text-muted)] hover:bg-[var(--bg-tertiary)]'
+            )}
+            title="Toggle preview (Ctrl+E)"
+          >
+            {showPreview ? <IconColumns size={18} /> : <IconEye size={18} />}
+          </button>
+
+          {/* Fullscreen */}
+          <button
+            onClick={() => setIsFullscreen(!isFullscreen)}
+            className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors"
+            title="Toggle fullscreen (Ctrl+Shift+M)"
+          >
+            {isFullscreen ? <IconMinimize size={18} /> : <IconMaximize size={18} />}
+          </button>
+
+          {/* Keyboard shortcuts */}
+          <button
+            onClick={() => setShowShortcuts(true)}
+            className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors"
+            title="Keyboard shortcuts (Ctrl+/)"
+          >
+            <IconKeyboard size={18} />
+          </button>
+
+          {/* Save button */}
+          <Button
+            size="sm"
+            icon={<IconSave size={16} />}
+            onClick={handleSave}
+            loading={saveMutation.isPending}
+            disabled={!hasUnsavedChanges}
+            className="ml-1"
+          >
+            Save
           </Button>
         </div>
+      </header>
+
+      {/* Main Content */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* File Tree */}
+        {showFiles && (
+          <aside className="w-56 border-r border-[var(--border)] bg-[var(--bg-secondary)] overflow-y-auto shrink-0">
+            <FileTree slug={slug} onFileSelect={(path) => insertText(`![${path}](${path})`)} />
+          </aside>
+        )}
+
+        {/* Editor Area */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Toolbar */}
+          <Toolbar onInsert={insertText} />
+
+          {/* Editor + Preview */}
+          <div className="flex-1 flex overflow-hidden">
+            {/* Editor */}
+            <div className={clsx('overflow-hidden flex flex-col', showPreview ? 'w-1/2' : 'w-full')}>
+              <CodeMirror
+                ref={editorRef}
+                value={content}
+                height="100%"
+                theme={theme === 'dark' ? 'dark' : 'light'}
+                extensions={[markdown({ base: markdownLanguage }), EditorView.lineWrapping]}
+                onChange={setContent}
+                className="flex-1 overflow-hidden"
+                basicSetup={{
+                  lineNumbers: true,
+                  foldGutter: true,
+                  highlightActiveLine: true,
+                  highlightActiveLineGutter: true,
+                  bracketMatching: true,
+                  closeBrackets: true,
+                  autocompletion: true,
+                  rectangularSelection: true,
+                  crosshairCursor: false,
+                  highlightSelectionMatches: true,
+                  searchKeymap: true,
+                }}
+              />
+            </div>
+
+            {/* Preview */}
+            {showPreview && (
+              <div
+                ref={previewRef}
+                className="w-1/2 border-l border-[var(--border)] overflow-y-auto bg-[var(--bg-primary)]"
+              >
+                <div className="max-w-3xl mx-auto p-8 markdown-preview">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm, remarkMath]}
+                    rehypePlugins={[rehypeKatex, rehypeHighlight, rehypeRaw]}
+                    urlTransform={transformImageUri}
+                  >
+                    {content}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
-      {savingError && status === 'error' ? (
-        <div className="message message-error">{savingError}</div>
-      ) : null}
-
-      {isIndexMissing ? (
-        <div className="message">
-          index.md is missing for this post. Saving will create it automatically.
+      {/* Status bar */}
+      <footer className="h-6 flex items-center justify-between px-4 border-t border-[var(--border)] bg-[var(--bg-secondary)] text-xs text-[var(--text-muted)] shrink-0">
+        <div className="flex items-center gap-4">
+          <span>Ln {stats.lines}</span>
+          <span>{stats.words} words</span>
+          <span>{stats.chars} characters</span>
         </div>
-      ) : null}
-
-      <div className={clsx('post-workspace', !showFiles && 'fullwidth')}>
-        {showFiles ? (
-          <FileBrowser
-            slug={postSlug}
-            onStructureChange={() => {
-              queryClient.invalidateQueries({ queryKey: ['postIndex', postSlug] })
-            }}
-          />
-        ) : null}
-
-        <div className={clsx('editor-panels', viewMode !== 'split' && 'editor-panels-single')}>
-          {isLoading ? (
-            <div className="editor-pane">Loading content…</div>
-          ) : viewMode === 'source' ? (
-            renderEditorPane(true)
-          ) : viewMode === 'preview' ? (
-            renderPreviewPane(true)
-          ) : (
-            <PanelGroup direction="horizontal" style={{ height: '100%' }}>
-              <Panel defaultSize={50} minSize={25}>
-                {renderEditorPane(false)}
-              </Panel>
-              <PanelResizeHandle className="splitter-handle" />
-              <Panel defaultSize={50} minSize={25}>
-                {renderPreviewPane(false)}
-              </Panel>
-            </PanelGroup>
-          )}
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={autoSaveEnabled}
+              onChange={(e) => setAutoSaveEnabled(e.target.checked)}
+              className="w-3 h-3 rounded"
+            />
+            Auto-save
+          </label>
+          <span>Markdown</span>
         </div>
-      </div>
+      </footer>
+
+      {/* Hidden file input for manual upload */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        onChange={(e) => {
+          if (e.target.files) {
+            Array.from(e.target.files).forEach((f) => uploadMutation.mutate(f))
+            e.target.value = ''
+          }
+        }}
+        className="hidden"
+      />
+
+      {/* Keyboard shortcuts modal */}
+      <KeyboardShortcuts open={showShortcuts} onClose={() => setShowShortcuts(false)} />
     </div>
   )
 }

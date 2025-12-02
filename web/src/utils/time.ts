@@ -4,8 +4,6 @@ export function formatRelativeTime(input: Date | string): string {
     return 'Unknown'
   }
 
-  const diffSeconds = (date.getTime() - Date.now()) / 1000
-
   const divisions: Array<{ amount: number; unit: Intl.RelativeTimeFormatUnit }> = [
     { amount: 60, unit: 'second' },
     { amount: 60, unit: 'minute' },
@@ -16,10 +14,13 @@ export function formatRelativeTime(input: Date | string): string {
     { amount: Number.POSITIVE_INFINITY, unit: 'year' },
   ]
 
-  let duration = diffSeconds
+  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
+  
+  const durationInSeconds = (date.getTime() - Date.now()) / 1000
+  let duration = durationInSeconds
+
   for (const division of divisions) {
     if (Math.abs(duration) < division.amount) {
-      const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
       return rtf.format(Math.round(duration), division.unit)
     }
     duration /= division.amount
@@ -27,3 +28,5 @@ export function formatRelativeTime(input: Date | string): string {
 
   return ''
 }
+
+export const formatTime = formatRelativeTime
