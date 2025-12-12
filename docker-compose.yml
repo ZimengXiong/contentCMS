@@ -3,10 +3,9 @@ services:
   server:
     build: ./server
     volumes:
-      - ../hugoSite/content/:/usr/src/content
-      - ../hugoSite:/usr/src/hugoSite
+      - ../Website:/Website
     environment:
-      - HUGO_SITE_DIR=/usr/src/hugoSite
+      - HUGO_SITE_DIR=/Website
     restart: always
   web:
     build:

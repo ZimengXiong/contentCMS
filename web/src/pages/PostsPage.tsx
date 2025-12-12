@@ -2,10 +2,11 @@ import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { clsx } from 'clsx'
-import { fetchPosts, createPost, deletePost } from '../api/posts'
+import { fetchPosts, createPost, deletePost, updatePostMetadata } from '../api/posts'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { Input } from '../components/ui/Input'
+import { Switch } from '../components/ui/Switch'
 import { useToast } from '../components/ui/Toast'
 import {
   IconPlus,
@@ -89,6 +90,18 @@ export default function PostsPage() {
     },
     onError: () => {
       error('Failed to delete post')
+    },
+  })
+
+  const updateMetadataMutation = useMutation({
+    mutationFn: ({ slug, draft }: { slug: string; draft: boolean }) =>
+      updatePostMetadata(slug, { draft }),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['posts'] })
+      success(`Post marked as ${data.draft ? 'draft' : 'published'}`)
+    },
+    onError: () => {
+      error('Failed to update post status')
     },
   })
 
@@ -265,13 +278,25 @@ export default function PostsPage() {
       ) : viewMode === 'grid' ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filteredPosts.map((post) => (
-            <Card key={post.slug} className="group hover:border-[var(--accent)] transition-colors">
-              <Link to={`/post/${post.slug}`} className="block">
+            <Card key={post.slug} className="group hover:border-[var(--accent)] transition-colors flex flex-col">
+              <Link to={`/post/${post.slug}`} className="block flex-1">
                 <div className="flex items-start gap-3">
                   <div className="p-2 rounded-lg bg-[var(--bg-tertiary)] text-[var(--accent)]">
                     <IconFileText size={20} />
                   </div>
                   <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span
+                        className={clsx(
+                          'px-1.5 py-0.5 text-[10px] uppercase font-bold tracking-wider rounded-full border',
+                          post.draft
+                            ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20'
+                            : 'bg-green-500/10 text-green-500 border-green-500/20'
+                        )}
+                      >
+                        {post.draft ? 'Draft' : 'Published'}
+                      </span>
+                    </div>
                     <h3 className="font-semibold text-[var(--text-primary)] truncate group-hover:text-[var(--accent)] transition-colors" title={post.name}>
                       {post.name}
                     </h3>
@@ -283,9 +308,17 @@ export default function PostsPage() {
               </Link>
 
               <div className="flex items-center justify-between mt-4 pt-4 border-t border-[var(--border)]">
-                <span className="text-xs text-[var(--text-muted)]">
-                  {post.modifiedAt ? formatTime(post.modifiedAt) : 'Unknown'}
-                </span>
+                <div className="flex items-center gap-2" title="Toggle Draft Status">
+                  <Switch
+                    checked={post.draft}
+                    onCheckedChange={(checked) =>
+                      updateMetadataMutation.mutate({ slug: post.slug, draft: checked })
+                    }
+                  />
+                  <span className="text-xs text-[var(--text-muted)]">
+                    {post.draft ? 'Draft' : 'Public'}
+                  </span>
+                </div>
                 <div className="flex gap-1">
                   <button
                     onClick={() => handleDelete(post.slug, post.name)}
@@ -315,29 +348,57 @@ export default function PostsPage() {
                 <IconFileText size={18} />
               </div>
               <div className="flex-1 min-w-0">
-                <Link to={`/post/${post.slug}`} className="hover:text-[var(--accent)] transition-colors">
-                  <h3 className="font-medium text-[var(--text-primary)] truncate" title={post.name}>
-                    {post.name}
-                  </h3>
-                </Link>
+                <div className="flex items-center gap-2">
+                  <Link to={`/post/${post.slug}`} className="hover:text-[var(--accent)] transition-colors">
+                    <h3 className="font-medium text-[var(--text-primary)] truncate" title={post.name}>
+                      {post.name}
+                    </h3>
+                  </Link>
+                  <span
+                    className={clsx(
+                      'px-1.5 py-0.5 text-[10px] uppercase font-bold tracking-wider rounded-full border',
+                      post.draft
+                        ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20'
+                        : 'bg-green-500/10 text-green-500 border-green-500/20'
+                    )}
+                  >
+                    {post.draft ? 'Draft' : 'Published'}
+                  </span>
+                </div>
                 <p className="text-xs text-[var(--text-muted)] font-mono truncate">/{post.slug}</p>
               </div>
-              <span className="text-xs text-[var(--text-muted)] hidden sm:block">
-                {post.modifiedAt ? formatTime(post.modifiedAt) : 'Unknown'}
-              </span>
-              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  onClick={() => handleDelete(post.slug, post.name)}
-                  className="p-1.5 rounded-md text-[var(--text-muted)] hover:text-[var(--danger)] hover:bg-[var(--bg-primary)] transition-colors"
-                  title="Delete"
-                >
-                  <IconTrash size={16} />
-                </button>
-                <Link to={`/post/${post.slug}`}>
-                  <button className="p-1.5 rounded-md text-[var(--text-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-primary)] transition-colors">
-                    <IconEdit size={16} />
+              
+              <div className="flex items-center gap-4">
+                 <div className="flex items-center gap-2" title="Toggle Draft Status">
+                  <Switch
+                    checked={post.draft}
+                    onCheckedChange={(checked) =>
+                      updateMetadataMutation.mutate({ slug: post.slug, draft: checked })
+                    }
+                  />
+                  <span className="text-xs text-[var(--text-muted)] hidden sm:block w-14">
+                    {post.draft ? 'Draft' : 'Public'}
+                  </span>
+                </div>
+
+                <span className="text-xs text-[var(--text-muted)] hidden sm:block w-24 text-right">
+                  {post.modifiedAt ? formatTime(post.modifiedAt) : 'Unknown'}
+                </span>
+
+                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={() => handleDelete(post.slug, post.name)}
+                    className="p-1.5 rounded-md text-[var(--text-muted)] hover:text-[var(--danger)] hover:bg-[var(--bg-primary)] transition-colors"
+                    title="Delete"
+                  >
+                    <IconTrash size={16} />
                   </button>
-                </Link>
+                  <Link to={`/post/${post.slug}`}>
+                    <button className="p-1.5 rounded-md text-[var(--text-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-primary)] transition-colors">
+                      <IconEdit size={16} />
+                    </button>
+                  </Link>
+                </div>
               </div>
             </div>
           ))}

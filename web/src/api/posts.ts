@@ -4,6 +4,7 @@ export type PostSummary = {
   name: string
   slug: string
   hasIndex: boolean
+  draft: boolean
   modifiedAt: string
 }
 
@@ -27,6 +28,13 @@ export async function createPost(name: string) {
   return apiFetch<{ message: string; name: string }>('/posts', {
     method: 'POST',
     body: { name },
+  })
+}
+
+export async function updatePostMetadata(slug: string, metadata: { draft: boolean }) {
+  return apiFetch<{ message: string; draft: boolean }>(`/posts/${encodeURIComponent(slug)}/metadata`, {
+    method: 'PATCH',
+    body: metadata,
   })
 }
 

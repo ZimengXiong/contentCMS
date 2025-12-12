@@ -7,6 +7,7 @@ const fse = require("fs-extra");
 const multer = require("multer");
 const prettier = require("prettier");
 const { spawn } = require("child_process");
+const matter = require("gray-matter");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -16,7 +17,14 @@ const upload = multer({
   limits: { fileSize: MAX_UPLOAD_SIZE },
 });
 
-const CONTENT_ROOT = path.resolve(__dirname, "../../content");
+const CONTENT_ROOT = process.env.HUGO_SITE_DIR
+  ? path.join(process.env.HUGO_SITE_DIR, "content")
+  : path.resolve(__dirname, "../../../Website/content");
+
+console.log("DEBUG: HUGO_SITE_DIR:", process.env.HUGO_SITE_DIR);
+console.log("DEBUG: CONTENT_ROOT:", CONTENT_ROOT);
+console.log("DEBUG: __dirname:", __dirname);
+
 const POSTS_DIR = path.join(CONTENT_ROOT, "posts");
 const WEBSITE_SCRIPT = path.join(CONTENT_ROOT, "website.fish");
 
@@ -165,11 +173,23 @@ app.get("/api/posts", async (req, res, next) => {
           const dirPath = path.join(POSTS_DIR, entry.name);
           const indexPath = path.join(dirPath, "index.md");
           const stats = await fs.stat(dirPath);
-          const indexStats = await fs.stat(indexPath).catch(() => null);
+          let indexStats = null;
+          let draft = false;
+
+          try {
+            indexStats = await fs.stat(indexPath);
+            const content = await fs.readFile(indexPath, "utf8");
+            const parsed = matter(content);
+            draft = !!parsed.data.draft;
+          } catch (e) {
+            // index.md might not exist or be readable
+          }
+
           return {
             name: entry.name,
             slug: entry.name,
             hasIndex: Boolean(indexStats),
+            draft,
             modifiedAt: (indexStats || stats).mtime,
           };
         })
@@ -177,6 +197,47 @@ app.get("/api/posts", async (req, res, next) => {
 
     posts.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
     res.json({ posts });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/posts/:slug/metadata", async (req, res, next) => {
+  try {
+    const { slug } = req.params;
+    const { draft } = req.body;
+    
+    if (typeof draft !== "boolean") {
+      const error = new Error("Draft status must be a boolean");
+      error.status = 400;
+      throw error;
+    }
+
+    const postDir = resolvePostDir(slug);
+    await ensurePostDirectory(postDir);
+    const indexPath = path.join(postDir, "index.md");
+    
+    const exists = await fse.pathExists(indexPath);
+    if (!exists) {
+      const error = new Error("index.md not found");
+      error.status = 404;
+      throw error;
+    }
+
+    const content = await fs.readFile(indexPath, "utf8");
+    const parsed = matter(content);
+    
+    parsed.data.draft = draft;
+    
+    // stringify back to markdown
+    const updatedContent = matter.stringify(parsed.content, parsed.data);
+    
+    // Optional: format with prettier to keep it clean
+    const formatted = await prettier.format(updatedContent, { parser: "markdown" });
+    
+    await fs.writeFile(indexPath, formatted, "utf8");
+    
+    res.json({ message: "Metadata updated", draft });
   } catch (error) {
     next(error);
   }
@@ -393,10 +454,7 @@ app.post("/api/deploy", async (req, res, next) => {
       throw error;
     }
 
-    const hugoSiteDir = process.env.HUGO_SITE_DIR || path.resolve(
-      process.env.HOME || "/home/zimengx",
-      "Code/Production_Do_Not_Touch/hugoSite"
-    );
+    const hugoSiteDir = process.env.HUGO_SITE_DIR || path.resolve(__dirname, "../../../Website");
     const dirExists = await fse.pathExists(hugoSiteDir);
     if (!dirExists) {
       const error = new Error("Hugo site directory not found");
