@@ -42,7 +42,7 @@ export default function PostsPage() {
   const filteredPosts = useMemo(() => {
     if (!posts) return []
     let result = [...posts]
-    
+
     // Filter by search
     if (searchQuery) {
       const query = searchQuery.toLowerCase()
@@ -52,7 +52,7 @@ export default function PostsPage() {
           p.slug.toLowerCase().includes(query)
       )
     }
-    
+
     // Sort
     switch (sortBy) {
       case 'name':
@@ -65,7 +65,7 @@ export default function PostsPage() {
         result.sort((a, b) => new Date(a.modifiedAt || 0).getTime() - new Date(b.modifiedAt || 0).getTime())
         break
     }
-    
+
     return result
   }, [posts, searchQuery, sortBy])
 

@@ -3,9 +3,10 @@ services:
   server:
     build: ./server
     volumes:
-      - /home/zimengx/Code/Production_Do_Not_Touch/hugoSite/content/:/usr/src/content
+      - ../hugoSite/content/:/usr/src/content
+      - ../hugoSite:/usr/src/hugoSite
     environment:
-      - HUGO_SITE_DIR=/path/to/your/hugoSite
+      - HUGO_SITE_DIR=/usr/src/hugoSite
     restart: always
   web:
     build:

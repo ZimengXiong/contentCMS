@@ -10,6 +10,9 @@ COPY package*.json ./
 # Install any needed packages
 RUN npm install
 
+# Install fish shell for website scripts
+RUN apk add --no-cache fish git
+
 # Bundle app source
 COPY . .
 
